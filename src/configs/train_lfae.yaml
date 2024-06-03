@@ -1,0 +1,154 @@
+global_seed: 47
+output_dir: "output/lfae"
+
+# Dataset parameters
+# Each dataset should contain 2 folders train and test
+# Each video can be represented as:
+#   - an image of concatenated frames
+#   - '.mp4' or '.gif'
+#   - folder with all frames from a specific video
+# dataset_params:
+#   target: agi.dataset.WebVidDataset
+#   params:
+#     metafile: data/.webvid10m
+#     data_folder: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-mtcv/densechen/webvid/data/videos/
+#     resolution: 256
+#     n_frames: 2
+#     sequence_length: 150
+
+dataset_params:
+  target: agi.dataset.CelebvDataset
+  params:
+    properties:
+      - 'action'
+      - 'emotion'
+      - 'face40_details'
+      - 'light_color_temp'
+      - 'light_dir'
+      - 'light_intensity'
+    metafile: data/.celebv70k
+    data_folder: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-mtcv/densechen/celebv
+    resolution: 256
+    n_frames: 2
+    sequence_length: 150
+
+# Defines architecture of the model
+flow_ae_checkpoints: 'output/lfae/checkpoints/RegionMM.pth'
+
+flow_ae_params:
+  target: agi.lfae.FlowAE
+  params:
+    # Number of regions
+    num_regions: 256
+    # Number of channels, for RGB image it is always 3
+    num_channels: 3
+    # Enable estimation of affine parameters for each region,
+    # set to False if only region centers (keypoints) need to be estimated
+    estimate_affine: True
+    # Svd can perform random axis swap between source and driving if singular values are close to each other
+    # Set to True to avoid axis swap between source and driving
+    revert_axis_swap: True
+
+    # Parameters of background prediction network based on simple Unet-like encoder.
+    bg_predictor_params:
+      # Number of features multiplier
+      block_expansion: 128
+      # Maximum allowed number of features
+      max_features: 1024
+      # Number of block in the Encoder.
+      num_blocks: 5
+      # Type of background movement model, select one from ['zero', 'shift', 'affine', 'perspective']
+      bg_type: 'affine'
+
+    # Parameters of the region prediction network based on Unet
+    region_predictor_params:
+      # Softmax temperature for heatmaps
+      temperature: 0.1
+      # Number of features multiplier
+      block_expansion: 128
+      # Maximum allowed number of features
+      max_features: 1024
+      # Regions is predicted on smaller images for better performance,
+      # scale_factor=0.25 means that 256x256 image will be resized to 64x64
+      scale_factor: 1.0
+      # Number of block in Unet. Can be increased or decreased depending or resolution.
+      num_blocks: 5
+      # Either to use pca_based estimation of affine parameters of regression based
+      pca_based: True
+      # Either to use fast_svd (https://github.com/KinglittleQ/torch-batch-svd) or standard pytorch svd
+      # Fast svd may produce not meaningful regions if used along with revert_axis_swap
+      fast_svd: False
+
+    # Parameters of Generator, based on Jonson architecture
+    generator_params:
+      # Number of features multiplier
+      block_expansion: 128
+      # Maximum allowed number of features
+      max_features: 1024
+      # Number of down-sampling blocks in Jonson architecture.
+      # Can be increased or decreased depending or resolution.
+      num_down_blocks: 2
+      # Number of ResBlocks  in Jonson architecture.
+      num_bottleneck_blocks: 6
+      # To use skip connections or no.
+      skips: True
+      # Parameters of pixelwise flow predictor based on Unet
+      pixelwise_flow_predictor_params:
+        # Number of features multiplier
+        block_expansion: 128
+        # Maximum allowed number of features
+        max_features: 1024
+        # Number of block in Unet. Can be increased or decreased depending or resolution.
+        num_blocks: 5
+        # Flow predictor operates on the smaller images for better performance,
+        # scale_factor=0.25 means that 256x256 image will be resized to 64x64
+        scale_factor: 1.0
+        # Set to True in order to use deformed source images using sparse flow
+        use_deformed_source: True
+        # Set to False in order to render region heatmaps with fixed covariance
+        # True for covariance estimate using region_predictor
+        use_covar_heatmap: True
+        # Set to False to disable occlusion mask estimation
+        # Please do not estimate occlusion map
+        estimate_occlusion_map: False
+
+# Parameters of training (reconstruction)
+train_params:
+  steps: 1_000_000
+  # Drop learning rate 10 times after this epochs
+  steps_milestones: [10_000, 100_000]
+  # Initial learning rate
+  lr: 2.0e-4
+  # Dataset preprocessing cpu workers
+  dataloader_workers: 6
+  print_freq: 100
+  save_img_freq: 1000
+  # update checkpoint in this frequent
+  update_ckpt_freq: 1_000
+  save_ckpt_freq: 10_000
+  # Scales for perceptual pyramide loss. If scales = [1, 0.5, 0.25, 0.125] and image resolution is 256x256,
+  # than the loss will be computer on resolutions 256x256, 128x128, 64x64, 32x32.
+  scales: [1, 0.5, 0.25, 0.125]
+  # Parameters of transform for equivariance loss
+  transform_params:
+    sigma_affine: 0.05
+    sigma_tps: 0.005
+    points_tps: 5
+  loss_weights:
+    # Weights for perceptual pyramide loss. Note that here you can only specify weight across the layer, and
+    # weights across the resolution will be the same.
+    perceptual: [10, 10, 10, 10, 10]
+    # Weights for equivariance loss.
+    equivariance_shift: 10
+    equivariance_affine: 10
+
+# Parameters of visualization
+visualizer_params:
+  # Size of keypoints
+  kp_size: 2
+  # Draw border between images or not
+  draw_border: True
+  # Colormap for regions and keypoints visualization
+  colormap: 'gist_rainbow'
+  # Background color for region visualization
+  region_bg_color: [1, 1, 1]
